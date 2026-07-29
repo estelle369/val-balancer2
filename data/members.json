@@ -1,0 +1,13 @@
+
+    {
+    "1": {"riot_id": "유저1#KR1", "tier": "아이언 1", "score": 100},
+    "2": {"riot_id": "유저2#KR1", "tier": "골드 2", "score": 750},
+    "3": {"riot_id": "유저3#KR1", "tier": "초월자 1", "score": 1300},
+    "4": {"riot_id": "유저4#KR1", "tier": "실버 3", "score": 600},
+    "5": {"riot_id": "유저5#KR1", "tier": "플래티넘 2", "score": 950},
+    "6": {"riot_id": "유저6#KR1", "tier": "다이아몬드 1", "score": 1100},
+    "7": {"riot_id": "유저7#KR1", "tier": "불멸 1", "score": 1600},
+    "8": {"riot_id": "유저8#KR1", "tier": "브론즈 2", "score": 350},
+    "9": {"riot_id": "유저9#KR1", "tier": "골드 1", "score": 700},
+    "10": {"riot_id": "유저10#KR1", "tier": "초월자 3", "score": 1400}
+}
