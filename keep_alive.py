@@ -1,26 +1,24 @@
 import os
-from threading import Thread
+import threading
 from flask import Flask
 
-# Flask 웹 서버 객체 생성
-app = Flask('')
+app = Flask(__name__)
 
 
 @app.route('/')
-def main():
-  # Render 스캔 및 웹 접속 테스트용 텍스트
-  return "Bot is alive!"
+def home():
+  return "OK", 200
 
 
-def run():
-  # Render가 부여하는 환경변수 PORT를 읽어오고, 없을 경우 기본값 10000 사용
-  port = int(os.environ.get('PORT', 10000))
-  # 외부 접근이 가능하도록 host를 '0.0.0.0'으로 지정하는 것이 매우 중요합니다!
-  app.run(host='0.0.0.0', port=port)
+def run_flask():
+  # Render가 제공하는 PORT 환경변수를 우선 사용 (기본 10000)
+  port = int(os.environ.get("PORT", 10000))
+  # Werkzeug 서빙 로거 및 멀티스레드 바인딩 안정화
+  app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 
 def keep_alive():
-  # 디스코드 봇 동작을 방해하지 않도록 별도 쓰레드에서 웹서버 실행
-  server = Thread(target=run)
-  server.daemon = True  # 메인 프로세스 종료 시 함께 종료되도록 설정
-  server.start()
+  # Flask 서버 스레드 생성 및 실행
+  server_thread = threading.Thread(target=run_flask, daemon=True)
+  server_thread.start()
+  print("🌐 [Keep-Alive] Flask 서버 스레드가 시작되었습니다.")
