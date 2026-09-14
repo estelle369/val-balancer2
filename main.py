@@ -5,7 +5,8 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from config import TIER_SCORES
-from database import add_or_update_member, load_members, delete_member
+# database 모듈에서 init_db 추가 임포트
+from database import add_or_update_member, load_members, delete_member, init_db
 from utils.balancer import calculate_best_teams
 from keep_alive import keep_alive
 
@@ -33,90 +34,110 @@ class ValBot(commands.Bot):
 bot = ValBot()
 
 
-# --- [디스코드 드롭다운 UI 클래스] ---
-class MemberSelectView(discord.ui.View):
+# --- [디스코드 버튼 기반 내전 모집 UI 클래스] ---
+class MatchRecruitView(discord.ui.View):
 
     def __init__(self, members_dict):
-        super().__init__(timeout=180)  # 3분간 응답 없으면 무효화
-
-        options = []
-        for uid, info in list(members_dict.items())[:25]:  # 디스코드 제한상 한 번에 최대 25명
-            options.append(
-                discord.SelectOption(
-                    label=info['riot_id'],
-                    value=uid,
-                    description=f"티어: {info['tier']} ({info['score']}점)",
-                )
-            )
-
-        # 유저가 0명이거나 부족할 때 min/max_values 에러 방지
-        total_options = len(options)
-        min_val = min(10, total_options) if total_options > 0 else 1
-        max_val = min(10, total_options) if total_options > 0 else 1
-
-        self.select_menu = discord.ui.Select(
-            placeholder="오늘 내전에 참여할 10명을 선택해주세요!",
-            min_values=min_val,
-            max_values=max_val,
-            options=options if options else [
-                discord.SelectOption(label="등록된 유저 없음", value="none")
-            ],
-            disabled=total_options < 10 # 10명 미만이면 드롭다운 비활성화
-        )
-        self.select_menu.callback = self.select_callback
-        self.add_item(self.select_menu)
+        super().__init__(timeout=None)  # 모집 완료 전까지 타임아웃 없이 유지
         self.members_dict = members_dict
+        self.participants = []  # 참가 등록한 discord.Member 객체 리스트
 
-    async def select_callback(self, interaction: discord.Interaction):
-        selected_ids = self.select_menu.values
+    @discord.ui.button(label="참가 ⚔️", style=discord.ButtonStyle.success, custom_id="match_join_btn")
+    async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = str(interaction.user.id)
 
-        if len(selected_ids) < 10:
+        # 1. DB 등록 여부 확인 (미등록 유저 차단)
+        if user_id not in self.members_dict:
             await interaction.response.send_message(
-                f"❌ 10명을 정확히 선택해주세요! (현재 선택: {len(selected_ids)}명)",
-                ephemeral=True,
+                "❌ 등록되지 않은 유저입니다. `/등록` 명령어로 먼저 등록해 주세요!",
+                ephemeral=True
             )
             return
 
-        selected_players = []
-        for uid in selected_ids:
-            info = self.members_dict[uid]
-            selected_players.append({
-                "id": uid,
-                "riot_id": info["riot_id"],
-                "tier": info["tier"],
-                "score": info["score"],
-            })
+        # 2. 중복 참가 확인
+        if interaction.user in self.participants:
+            await interaction.response.send_message("이미 참가 명단에 있습니다!", ephemeral=True)
+            return
 
-        # 밸런싱 알고리즘 계산
-        team_a, team_b, score_a, score_b, diff = calculate_best_teams(
-            selected_players
-        )
+        # 3. 인원 초과 확인
+        if len(self.participants) >= 10:
+            await interaction.response.send_message("이미 10명 모집이 완료되었습니다.", ephemeral=True)
+            return
 
-        embed = discord.Embed(
-            title="⚔️ 발로란트 내전 5:5 최적 팀 밸런스",
-            description=f"**두 팀 점수 차이:** {diff}점",
-            color=discord.Color.gold(),
-        )
+        self.participants.append(interaction.user)
 
-        team_a_text = "\n".join(
-            [f"• <@{p['id']}> (**{p['riot_id']}**) - {p['tier']}" for p in team_a]
-        )
-        team_b_text = "\n".join(
-            [f"• <@{p['id']}> (**{p['riot_id']}**) - {p['tier']}" for p in team_b]
-        )
+        # 🎯 10명이 모두 모였을 때 -> 자동 밸런싱 실행
+        if len(self.participants) == 10:
+            # 모집 완료 메시지 업데이트 (버튼 제거)
+            await interaction.response.edit_message(
+                content="✅ **10명 모집이 완료되었습니다! 팀 밸런싱을 진행합니다.**",
+                view=None
+            )
 
-        embed.add_field(
-            name=f"🔵 A 팀 (총점: {score_a}점 / 평균: {score_a//5}점)",
-            value=team_a_text,
-            inline=False,
-        )
-        embed.add_field(
-            name=f"🔴 B 팀 (총점: {score_b}점 / 평균: {score_b//5}점)",
-            value=team_b_text,
-            inline=False,
-        )
+            # DB 정보 추출 및 밸런스 계산에 필요한 데이터 포맷팅
+            selected_players = []
+            for member in self.participants:
+                uid = str(member.id)
+                info = self.members_dict[uid]
+                selected_players.append({
+                    "id": uid,
+                    "riot_id": info["riot_id"],
+                    "tier": info["tier"],
+                    "score": info["score"],
+                })
 
-        await interaction.response.send_message(embed=embed)
+            # 밸런싱 알고리즘 계산 (기존 balancer 모듈 호출)
+            team_a, team_b, score_a, score_b, diff = calculate_best_teams(selected_players)
+
+            embed = discord.Embed(
+                title="⚔️ 발로란트 내전 5:5 최적 팀 밸런스",
+                description=f"**두 팀 점수 차이:** {diff}점",
+                color=discord.Color.gold(),
+            )
+
+            team_a_text = "\n".join(
+                [f"• <@{p['id']}> (**{p['riot_id']}**) - {p['tier']}" for p in team_a]
+            )
+            team_b_text = "\n".join(
+                [f"• <@{p['id']}> (**{p['riot_id']}**) - {p['tier']}" for p in team_b]
+            )
+
+            embed.add_field(
+                name=f"🔵 A 팀 (총점: {score_a}점 / 평균: {score_a//5}점)",
+                value=team_a_text,
+                inline=False,
+            )
+            embed.add_field(
+                name=f"🔴 B 팀 (총점: {score_b}점 / 평균: {score_b//5}점)",
+                value=team_b_text,
+                inline=False,
+            )
+
+            # 채널에 최종 결과 Embed 송출
+            await interaction.channel.send(embed=embed)
+
+        else:
+            # 10명이 채워지기 전 실시간 명단 업데이트
+            user_mentions = "\n".join([f"{i+1}. {p.mention} (**{self.members_dict[str(p.id)]['riot_id']}**)" for i, p in enumerate(self.participants)])
+            await interaction.response.edit_message(
+                content=f"📢 **오늘 내전 참가자 모집중! ({len(self.participants)}/10)**\n\n**[현재 참가자 명단]**\n{user_mentions}",
+                view=self
+            )
+
+    @discord.ui.button(label="취소 ❌", style=discord.ButtonStyle.danger, custom_id="match_leave_btn")
+    async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user not in self.participants:
+            await interaction.response.send_message("참가 신청을 하지 않은 상태입니다.", ephemeral=True)
+            return
+
+        self.participants.remove(interaction.user)
+
+        user_mentions = "\n".join([f"{i+1}. {p.mention} (**{self.members_dict[str(p.id)]['riot_id']}**)" for i, p in enumerate(self.participants)]) if self.participants else "없음"
+        
+        await interaction.response.edit_message(
+            content=f"📢 **오늘 내전 참가자 모집중! ({len(self.participants)}/10)**\n\n**[현재 참가자 명단]**\n{user_mentions}",
+            view=self
+        )
 
 
 @bot.event
@@ -126,26 +147,27 @@ async def on_ready():
 
 # --- [명령어 1: 유저 등록] ---
 @bot.tree.command(
-    name="등록", description="발로란트 닉네임과 티어를 등록/수정합니다."
+    name="등록", description="이름과 티어를 등록/수정합니다."
 )
 @app_commands.describe(
-    riot_id="라이엇 닉네임#태그 (예: Hide on bush#KR1)", tier="티어 선택"
+    이름="이름을 입력해 주세요", tier="티어 선택"
 )
 @app_commands.choices(
     tier=[app_commands.Choice(name=t, value=t) for t in TIER_SCORES.keys()]
 )
 async def register(
     interaction: discord.Interaction,
-    riot_id: str,
+    이름: str,
     tier: app_commands.Choice[str],
 ):
     user_id = str(interaction.user.id)
     selected_tier = tier.value
-    score = add_or_update_member(user_id, riot_id, selected_tier)
+    # 입력받은 '이름' 변수를 기존 DB 함수(add_or_update_member)의 riot_id 자리에 전달
+    score = add_or_update_member(user_id, 이름, selected_tier)
 
     embed = discord.Embed(title="✅ 등록 완료", color=discord.Color.green())
     embed.add_field(name="디스코드 유저", value=f"<@{user_id}>", inline=False)
-    embed.add_field(name="이름", value=riot_id, inline=True)
+    embed.add_field(name="이름", value=이름, inline=True)
     embed.add_field(name="티어", value=f"{selected_tier} ({score}점)", inline=True)
 
     await interaction.response.send_message(embed=embed)
@@ -184,33 +206,28 @@ async def unregister(interaction: discord.Interaction):
         await interaction.response.send_message("❌ 등록된 정보가 없습니다.")
 
 
-# --- [명령어 4: 드롭다운으로 10명 선택 후 내전 팀 구성] ---
+# --- [명령어 4: [참가]/[취소] 버튼 모집 후 10명 완성 시 자동 내전 팀 구성] ---
 @bot.tree.command(
     name="내전",
-    description="등록된 유저 중 10명을 드롭다운으로 선택해 팀을 구성합니다.",
+    description="참가/취소 버튼으로 10명을 모집하여 자동으로 팀을 구성합니다.",
 )
 async def create_match(interaction: discord.Interaction):
     members = load_members()
 
-    # 인원이 0명이거나 10명 미만일 때 사전 차단
-    if not members or len(members) < 10:
-        current_count = len(members) if members else 0
-        await interaction.response.send_message(
-            f"❌ 등록된 인원이 부족합니다! 최소 10명이 필요합니다. (현재: {current_count}명)\n"
-            f"`/등록` 명령어로 참여자를 추가해 주세요."
-        )
-        return
-
-    view = MemberSelectView(members)
+    view = MatchRecruitView(members)
     await interaction.response.send_message(
-        "👇 아래 드롭다운 메뉴에서 오늘 내전에 참가할 **10명**을 선택해 주세요!", view=view
+        "📢 **오늘 내전 참가자 모집중! (0/10)**\n아래 **[참가 ⚔️]** 버튼을 눌러주세요!",
+        view=view
     )
 
 
 # --- [실행부] ---
 if __name__ == "__main__":
-    # 1. Render 포트 스캔 대응 웹서버 백그라운드 실행
+    # 1. Aiven 클라우드 DB 접속 확인 및 테이블 자동 생성
+    init_db()
+
+    # 2. Render 포트 스캔 대응 웹서버 백그라운드 실행
     keep_alive()
 
-    # 2. 디스코드 봇 로그인 실행
+    # 3. 디스코드 봇 로그인 실행
     bot.run(TOKEN)
