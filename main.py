@@ -145,7 +145,7 @@ async def register(
 
     embed = discord.Embed(title="✅ 등록 완료", color=discord.Color.green())
     embed.add_field(name="디스코드 유저", value=f"<@{user_id}>", inline=False)
-    embed.add_field(name="라이엇 ID", value=riot_id, inline=True)
+    embed.add_field(name="이름", value=riot_id, inline=True)
     embed.add_field(name="티어", value=f"{selected_tier} ({score}점)", inline=True)
 
     await interaction.response.send_message(embed=embed)
