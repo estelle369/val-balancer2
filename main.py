@@ -106,7 +106,7 @@ class MatchRecruitView(discord.ui.View):
         self.message = None
 
     async def update_message_direct(self, fallback_msg=None):
-        """드롭다운 및 새로고침에서 모집 메시지를 실시간 갱신"""
+        """드롭다운에서 대리참가/취소 시 원본 메시지를 실시간 갱신"""
         target_msg = self.message or fallback_msg
         
         if len(self.participants) == 10:
@@ -237,11 +237,6 @@ class MatchRecruitView(discord.ui.View):
         self.message = interaction.message  # 메시지 객체 저장
         view = ProxyView(self, action_type="remove")
         await interaction.response.send_message("명단에서 제외할 유저를 선택하세요:", view=view, ephemeral=True)
-
-    # 🔄 [명단 새로고침/다시 그려주기 버튼 추가]
-    @discord.ui.button(label="새로고침 🔄", style=discord.ButtonStyle.primary, custom_id="refresh_btn")
-    async def refresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.update_message(interaction)
 
 
 @bot.event
