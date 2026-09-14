@@ -42,7 +42,6 @@ class ProxySelectMenu(Select):
             current_ids = [p["id"] for p in self.parent_view.participants]
             for uid, info in members.items():
                 if uid not in current_ids:
-                    # DB의 riot_id 컬럼을 '이름'으로 취급하여 표시
                     options.append(discord.SelectOption(
                         label=info["riot_id"],
                         value=uid,
@@ -64,8 +63,10 @@ class ProxySelectMenu(Select):
         super().__init__(placeholder=placeholder, min_values=1, max_values=1, options=options[:25])
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
         if self.values[0] == "none":
-            await interaction.response.send_message("선택 가능한 유저가 없습니다.", ephemeral=True)
+            await interaction.followup.send("선택 가능한 유저가 없습니다.", ephemeral=True)
             return
 
         selected_id = self.values[0]
@@ -73,25 +74,24 @@ class ProxySelectMenu(Select):
 
         if self.action_type == "add":
             if len(self.parent_view.participants) >= 10:
-                await interaction.response.send_message("이미 10명 모집이 완료되었습니다.", ephemeral=True)
+                await interaction.followup.send("이미 10명 모집이 완료되었습니다.", ephemeral=True)
                 return
             
             info = members[selected_id]
             self.parent_view.participants.append({
                 "id": selected_id,
-                "name": info["riot_id"],  # riot_id를 이름으로 사용
+                "name": info["riot_id"],
                 "tier": info["tier"],
                 "score": info["score"],
-                "is_guest": selected_id.startswith("guest_")
+                "is_guest": str(selected_id).startswith("guest_")
             })
-            await interaction.response.send_message(f"✅ **{info['riot_id']}** 님이 대리로 참가되었습니다.", ephemeral=True)
-        
+            await interaction.followup.send(f"✅ **{info['riot_id']}** 님이 대리로 참가되었습니다.", ephemeral=True)
         else:
             self.parent_view.participants = [p for p in self.parent_view.participants if p["id"] != selected_id]
-            await interaction.response.send_message("✅ 명단에서 정상적으로 제외되었습니다.", ephemeral=True)
+            await interaction.followup.send("✅ 명단에서 정상적으로 제외되었습니다.", ephemeral=True)
 
-        # 메인 뷰 업데이트
-        await self.parent_view.update_message(interaction)
+        # 🎯 대리 참가/취소 즉시 메인 모집 메시지 강제 업데이트!
+        await self.parent_view.update_message_direct(interaction.message)
 
 class ProxyView(View):
     def __init__(self, parent_view, action_type="add"):
@@ -102,9 +102,32 @@ class ProxyView(View):
 class MatchRecruitView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        self.participants = [] # dict 리스트로 관리 (id, name, tier, score, is_guest)
+        self.participants = [] # dict 리스트 (id, name, tier, score, is_guest)
+        self.message = None
+
+    async def update_message_direct(self, fallback_msg=None):
+        """드롭다운 및 새로고침에서 모집 메시지를 실시간 갱신"""
+        target_msg = self.message or fallback_msg
+        
+        if len(self.participants) == 10:
+            content = "✅ **10명 모집이 완료되었습니다! 팀 밸런싱을 진행합니다.**"
+            if target_msg:
+                await target_msg.edit(content=content, view=None)
+                await self.send_balance_result(target_msg.channel)
+        else:
+            mentions = []
+            for i, p in enumerate(self.participants):
+                user_display = p["name"] if p.get("is_guest") else f"<@{p['id']}> (**{p['name']}**)"
+                mentions.append(f"{i+1}. {user_display}")
+            
+            user_list = "\n".join(mentions) if mentions else "현재 참가자가 없습니다."
+            content = f"📢 **오늘 내전 참가자 모집중! ({len(self.participants)}/10)**\n\n**[현재 참가자 명단]**\n{user_list}"
+            
+            if target_msg:
+                await target_msg.edit(content=content, view=self)
 
     async def update_message(self, interaction: discord.Interaction):
+        self.message = interaction.message
         if len(self.participants) == 10:
             await self.process_matchmaking(interaction)
         else:
@@ -114,7 +137,6 @@ class MatchRecruitView(discord.ui.View):
                 mentions.append(f"{i+1}. {user_display}")
             
             user_list = "\n".join(mentions) if mentions else "현재 참가자가 없습니다."
-            
             content = f"📢 **오늘 내전 참가자 모집중! ({len(self.participants)}/10)**\n\n**[현재 참가자 명단]**\n{user_list}"
             
             if interaction.response.is_done():
@@ -128,13 +150,14 @@ class MatchRecruitView(discord.ui.View):
             await interaction.message.edit(content=content, view=None)
         else:
             await interaction.response.edit_message(content=content, view=None)
+        await self.send_balance_result(interaction.channel)
 
-        # balancer.py 형식에 맞게 데이터 전달
+    async def send_balance_result(self, channel):
         selected_players = []
         for p in self.participants:
             selected_players.append({
                 "id": p["id"],
-                "riot_id": p["name"],  # balancer에서 riot_id 키를 사용하므로 매핑
+                "riot_id": p["name"],
                 "tier": p["tier"],
                 "score": p["score"]
             })
@@ -150,7 +173,7 @@ class MatchRecruitView(discord.ui.View):
         def format_team(team):
             text_list = []
             for p in team:
-                is_guest = p['id'].startswith("guest_")
+                is_guest = str(p['id']).startswith("guest_")
                 display = f"**{p['riot_id']}**" if is_guest else f"<@{p['id']}> (**{p['riot_id']}**)"
                 text_list.append(f"• {display} - {p['tier']}")
             return "\n".join(text_list)
@@ -166,7 +189,7 @@ class MatchRecruitView(discord.ui.View):
             inline=False,
         )
 
-        await interaction.channel.send(embed=embed)
+        await channel.send(embed=embed)
 
     @discord.ui.button(label="참가 ⚔️", style=discord.ButtonStyle.success, custom_id="match_join_btn")
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -205,13 +228,20 @@ class MatchRecruitView(discord.ui.View):
 
     @discord.ui.button(label="대리참가 ➕", style=discord.ButtonStyle.secondary, custom_id="proxy_join_btn")
     async def proxy_join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.message = interaction.message  # 메시지 객체 저장
         view = ProxyView(self, action_type="add")
         await interaction.response.send_message("대리로 참가시킬 유저를 선택하세요:", view=view, ephemeral=True)
 
     @discord.ui.button(label="대리취소 ➖", style=discord.ButtonStyle.secondary, custom_id="proxy_leave_btn")
     async def proxy_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.message = interaction.message  # 메시지 객체 저장
         view = ProxyView(self, action_type="remove")
         await interaction.response.send_message("명단에서 제외할 유저를 선택하세요:", view=view, ephemeral=True)
+
+    # 🔄 [명단 새로고침/다시 그려주기 버튼 추가]
+    @discord.ui.button(label="새로고침 🔄", style=discord.ButtonStyle.primary, custom_id="refresh_btn")
+    async def refresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.update_message(interaction)
 
 
 @bot.event
@@ -289,6 +319,7 @@ async def create_match(interaction: discord.Interaction):
         "📢 **오늘 내전 참가자 모집중! (0/10)**\n\n**[현재 참가자 명단]**\n현재 참가자가 없습니다.",
         view=view
     )
+    view.message = await interaction.original_response()
 
 
 if __name__ == "__main__":
