@@ -48,11 +48,14 @@ class ValBot(commands.Bot):
 bot = ValBot()
 
 # --- [전역 상태 관리] ---
-# 내전 모집 채널 ID 저장 (서버ID: 채널ID)
+# 내전 모집 채널 저장 (guild_id: channel_id)
 target_channels = {}
 
+# 결과 및 명단 출력 채널 저장 (guild_id: result_channel_id)
+result_channels = {}
+
 # 현재 진행 중인 내전 모집 데이터 저장
-# 구조: { message_id: { "channel": channel, "participants": [], "lock": Lock(), "debounce_task": Task } }
+# 구조: { message_id: { "channel": channel, "guild_id": guild_id, "message": message, "participants": [], "lock": Lock(), "debounce_task": Task } }
 active_matches = {}
 
 
@@ -130,11 +133,22 @@ class ProxyView(discord.ui.View):
         self.add_item(ProxySelectMenu(match_data, action_type))
 
 
+def get_target_output_channel(guild_id, fallback_channel):
+    """결과 채널이 지정되어 있으면 그 채널 객체를 반환하고, 없으면 원래 채널을 반환합니다."""
+    if guild_id in result_channels:
+        channel_obj = bot.get_channel(result_channels[guild_id])
+        if channel_obj:
+            return channel_obj
+    return fallback_channel
+
+
 # --- [내전 모집 상태 업데이트 및 밸런서 실행 함수] ---
 async def update_match_status(match_data):
     participants = match_data["participants"]
-    channel = match_data["channel"]
-    msg = match_data["message"]
+    fallback_channel = match_data["channel"]
+    guild_id = match_data["guild_id"]
+    output_channel = get_target_output_channel(guild_id, fallback_channel)
+    
     is_full = len(participants) >= 10
 
     mentions = []
@@ -151,11 +165,10 @@ async def update_match_status(match_data):
     )
 
     try:
-        # 댓글 형태로 현재 참가 명단 스레드나 메시지로 상태 업데이트
         if is_full:
             embed.set_footer(text="10명이 모여 밸런싱을 진행합니다!")
-            await channel.send(embed=embed)
-            await run_balance_and_send(channel, participants)
+            await output_channel.send(embed=embed)
+            await run_balance_and_send(output_channel, participants)
         else:
             # 1초 디바운스 적용
             if match_data.get("debounce_task") and not match_data["debounce_task"].done():
@@ -163,7 +176,8 @@ async def update_match_status(match_data):
 
             async def delayed_send():
                 await asyncio.sleep(1.0)
-                await channel.send(embed=embed, delete_after=10) # 상태 메시지는 10초 후 자동 정돈
+                # 지정된 결과 채널에 상태 메시지 발송
+                await output_channel.send(embed=embed, delete_after=10)
 
             match_data["debounce_task"] = asyncio.create_task(delayed_send())
     except Exception as e:
@@ -218,19 +232,18 @@ async def on_message(message: discord.Message):
 
     guild_id = message.guild.id if message.guild else None
     if guild_id in target_channels and message.channel.id == target_channels[guild_id]:
-        # 지정된 내전 채널에 채팅이 올 때 실행
         try:
             await message.add_reaction("✅")
             await message.add_reaction("❌")
 
             active_matches[message.id] = {
                 "channel": message.channel,
+                "guild_id": guild_id,
                 "message": message,
                 "participants": [],
                 "lock": asyncio.Lock(),
                 "debounce_task": None
             }
-            print(f"새 내전 채팅 감지됨 (Message ID: {message.id})")
         except Exception as e:
             print(f"이모지 반응 추가 에러: {e}")
 
@@ -270,7 +283,6 @@ async def handle_reaction_change(payload: discord.RawReactionActionEvent, is_add
     async with match_data["lock"]:
         if emoji == "✅" and is_add:
             if user_id not in members:
-                # DB 미등록 유저는 이모지 취소
                 try:
                     msg = await match_data["channel"].fetch_message(payload.message_id)
                     await msg.remove_reaction(payload.emoji, member)
@@ -293,7 +305,6 @@ async def handle_reaction_change(payload: discord.RawReactionActionEvent, is_add
         elif emoji == "❌" or (emoji == "✅" and not is_add):
             match_data["participants"] = [p for p in match_data["participants"] if p["id"] != user_id]
 
-        # 누른 이모지는 정리
         try:
             msg = await match_data["channel"].fetch_message(payload.message_id)
             await msg.remove_reaction(payload.emoji, member)
@@ -303,14 +314,22 @@ async def handle_reaction_change(payload: discord.RawReactionActionEvent, is_add
     await update_match_status(match_data)
 
 
-# --- [명령어: 모집 채널 지정] ---
+# --- [명령어 1: 모집 채널 지정] ---
 @bot.tree.command(name="모집채널설정", description="현재 채널을 내전 모집 전용 채널로 지정합니다.")
 async def set_match_channel(interaction: discord.Interaction):
     target_channels[interaction.guild_id] = interaction.channel_id
-    await interaction.response.send_message(f"✅ <#{interaction.channel_id}> 채널이 **내전 모집 채널**로 설정되었습니다!\n이제 이 채널에 올라오는 모든 채팅에 봇이 참가 이모지를 자동으로 달아줍니다.")
+    await interaction.response.send_message(f"✅ <#{interaction.channel_id}> 채널이 **내전 모집 채널**로 설정되었습니다!")
 
 
-# --- [기존 명령어 1~4: 등록, 대리등록, 목록, 삭제] ---
+# --- [명령어 2: 결과/알림 출력 채널 지정] ---
+@bot.tree.command(name="결과채널설정", description="내전 참가 명단 및 밸런스 결과가 출력될 채널을 지정합니다.")
+@app_commands.describe(채널="결과 메시지를 보낼 디스코드 채널 선택")
+async def set_result_channel(interaction: discord.Interaction, 채널: discord.TextChannel):
+    result_channels[interaction.guild_id] = 채널.id
+    await interaction.response.send_message(f"📢 내전 명단 및 밸런스 결과가 앞으로 {채널.mention} 채널로 출력됩니다!")
+
+
+# --- [기존 명령어: 등록, 대리등록, 목록, 삭제] ---
 @bot.tree.command(name="등록", description="본인의 이름과 티어를 등록/수정합니다.")
 @app_commands.describe(이름="본인 이름 입력", tier="티어 선택")
 @app_commands.choices(tier=[app_commands.Choice(name=t, value=t) for t in TIER_SCORES.keys()])
