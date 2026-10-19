@@ -5,82 +5,90 @@ from config import TIER_SCORES
 
 load_dotenv()
 
+# --- [DB 연결 설정] ---
+DB_HOST = os.getenv('DB_HOST')
+DB_USER = os.getenv('DB_USER')
+DB_PASSWORD = os.getenv('DB_PASSWORD')
+DB_NAME = os.getenv('DB_NAME')
+DB_PORT = int(os.getenv('DB_PORT', 3306))
+
 def get_db_connection():
-    """Aiven MySQL 서버 연결 함수"""
+    """Aiven MySQL 데이터베이스 연결 객체를 반환합니다."""
     return pymysql.connect(
-        host=os.getenv("DB_HOST"),
-        port=int(os.getenv("DB_PORT", 24875)),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        database=os.getenv("DB_NAME", "defaultdb"),
-        cursorclass=pymysql.cursors.DictCursor,
-        autocommit=True
+        host=DB_HOST,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME,
+        port=DB_PORT,
+        charset='utf8mb4',
+        cursorclass=pymysql.cursors.DictCursor
     )
 
 def init_db():
-    """앱 실행 시 DB 접속 확인 및 members 테이블 자동 생성"""
-    connection = get_db_connection()
+    """앱 시작 시 members 테이블이 없으면 생성합니다."""
     try:
-        with connection.cursor() as cursor:
-            sql = """
-            CREATE TABLE IF NOT EXISTS members (
-                user_id VARCHAR(32) PRIMARY KEY,
-                riot_id VARCHAR(64) NOT NULL,
-                tier VARCHAR(32) NOT NULL,
-                score INT NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            );
-            """
-            cursor.execute(sql)
-            print("✅ Aiven MySQL DB 연결 및 테이블 확인 완료!")
-    finally:
-        connection.close()
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS members (
+                    user_id VARCHAR(255) PRIMARY KEY,
+                    riot_id VARCHAR(255) NOT NULL,
+                    tier VARCHAR(50) NOT NULL,
+                    score INT NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+        conn.commit()
+        conn.close()
+        print("✅ 데이터베이스(members 테이블) 초기화 완료!")
+    except Exception as e:
+        print(f"❌ 데이터베이스 초기화 실패: {e}")
 
 def load_members():
-    """Aiven DB에서 모든 등록 유저 불러오기"""
-    connection = get_db_connection()
+    """DB에서 모든 등록된 유저 정보를 불러와 딕셔너리 형태로 반환합니다."""
+    members = {}
     try:
-        with connection.cursor() as cursor:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
             cursor.execute("SELECT user_id, riot_id, tier, score FROM members")
             rows = cursor.fetchall()
-            
-            members = {}
             for row in rows:
-                members[row["user_id"]] = {
-                    "riot_id": row["riot_id"],
-                    "tier": row["tier"],
-                    "score": row["score"]
+                members[str(row['user_id'])] = {
+                    "riot_id": row['riot_id'],
+                    "tier": row['tier'],
+                    "score": row['score']
                 }
-            return members
-    finally:
-        connection.close()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ 회원 목록 불러오기 실패: {e}")
+    return members
 
-def add_or_update_member(discord_id: str, riot_id: str, tier: str):
-    """유저 등록 및 수정 (이미 존재하면 UPDATE, 없으면 INSERT)"""
-    score = TIER_SCORES.get(tier, 500)
-    connection = get_db_connection()
+def add_or_update_member(user_id: str, riot_id: str, tier: str):
+    """유저 정보를 등록 또는 수정하고 해당 티어의 점수를 반환합니다."""
+    score = TIER_SCORES.get(tier, 0)
     try:
-        with connection.cursor() as cursor:
-            sql = """
-            INSERT INTO members (user_id, riot_id, tier, score)
-            VALUES (%s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                riot_id = VALUES(riot_id),
-                tier = VALUES(tier),
-                score = VALUES(score);
-            """
-            cursor.execute(sql, (str(discord_id), riot_id, tier, score))
-            return score
-    finally:
-        connection.close()
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO members (user_id, riot_id, tier, score)
+                VALUES (%s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE riot_id = %s, tier = %s, score = %s
+            """, (user_id, riot_id, tier, score, riot_id, tier, score))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ 회원 등록/수정 실패: {e}")
+    return score
 
-def delete_member(discord_id: str) -> bool:
-    """Aiven DB에서 유저 등록 정보 삭제"""
-    connection = get_db_connection()
+def delete_member(user_id: str) -> bool:
+    """유저 정보를 DB에서 삭제합니다. 성공 시 True 반환"""
     try:
-        with connection.cursor() as cursor:
-            sql = "DELETE FROM members WHERE user_id = %s"
-            affected = cursor.execute(sql, (str(discord_id),))
-            return affected > 0
-    finally:
-        connection.close()
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM members WHERE user_id = %s", (user_id,))
+            affected_rows = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return affected_rows > 0
+    except Exception as e:
+        print(f"⚠️ 회원 삭제 실패: {e}")
+        return False
