@@ -41,6 +41,13 @@ class ValBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
+        # 맵 추첨 Cog 파일 동적 로드
+        try:
+            await self.load_extension("cogs.valorant_map")
+            print("✅ ValorantMapCog 로드 성공")
+        except Exception as e:
+            print(f"❌ Cog 로드 실패: {e}")
+
         await self.tree.sync()
         print("✅ 슬래시 커맨드가 동기화되었습니다!")
 
@@ -161,7 +168,6 @@ async def update_match_status(match_data):
     )
 
     try:
-        # 기존 상태 안내 메시지가 있으면 수정(edit), 없으면 새로 전송
         status_msg = match_data.get("status_msg")
         
         if is_full:
@@ -296,11 +302,9 @@ async def handle_reaction_change(payload: discord.RawReactionActionEvent, is_add
 
     async with match_data["lock"]:
         if emoji == "✅" and is_add:
-            # DB 미등록 유저 방어 로직
             if user_id not in members:
-                # 봇이 이모지를 지우지 않고 경고 메시지만 전송 (5초 후 삭제)
                 try:
-                    warn_msg = await output_channel.send(
+                    await output_channel.send(
                         f"⚠️ <@{user_id}> 님은 아직 등록되지 않았습니다! `/등록` 명령어로 본인 이름과 티어를 먼저 등록해 주세요.",
                         delete_after=5
                     )
@@ -323,7 +327,6 @@ async def handle_reaction_change(payload: discord.RawReactionActionEvent, is_add
         elif emoji == "❌" or (emoji == "✅" and not is_add):
             match_data["participants"] = [p for p in match_data["participants"] if p["id"] != user_id]
 
-    # 참가 상태 메시지 업데이트
     await update_match_status(match_data)
 
 
@@ -361,7 +364,7 @@ async def register(interaction: discord.Interaction, 이름: str, tier: app_comm
 @app_commands.choices(tier=[app_commands.Choice(name=t, value=t) for t in TIER_SCORES.keys()])
 async def register_proxy(interaction: discord.Interaction, 이름: str, tier: app_commands.Choice[str], 대상_유저: discord.User = None):
     target_id = str(대상_유저.id) if 대상_유저 else f"guest_{이름}"
-    display_user = f"<@{target_id}>" if 대상_유저 else f"**용병 (디스코드 미가입)**"
+    display_user = f"<@{target_id}>" if 대상_유zer else f"**용병 (디스코드 미가입)**"
     selected_tier = tier.value
     
     score = add_or_update_member(target_id, 이름, selected_tier)
