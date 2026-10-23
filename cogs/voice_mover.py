@@ -2,22 +2,28 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-# 전역 설정 저장 (서버별 B팀 음성 채널 ID)
-b_team_voice_channels = {}  # { guild_id: b_team_voice_channel_id }
+# 전역 설정 저장 (서버별 A팀/B팀 음성 채널 ID)
+a_team_voice_channels = {}  # { guild_id: a_team_voice_channel_id } (대기실/A팀 채널)
+b_team_voice_channels = {}  # { guild_id: b_team_voice_channel_id } (B팀 채널)
 
 
 class VoiceMoverCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # 슬래시 명령어 이름은 반드시 영문 소문자만 사용해야 합니다 (B -> b 수정)
+    @app_commands.command(name="a팀채널설정", description="대기실 및 A팀이 사용할 음성 채널을 지정합니다.")
+    @app_commands.describe(채널="A팀(대기실) 음성 채널 선택")
+    async def set_a_team_channel(self, interaction: discord.Interaction, 채널: discord.VoiceChannel):
+        a_team_voice_channels[interaction.guild_id] = 채널.id
+        await interaction.response.send_message(f"📢 A팀(대기실) 음성 채널이 {채널.mention} (으)로 설정되었습니다!")
+
     @app_commands.command(name="b팀채널설정", description="B팀 유저들이 이동할 음성 채널을 지정합니다.")
     @app_commands.describe(채널="B팀이 이동할 음성 채널 선택")
     async def set_b_team_channel(self, interaction: discord.Interaction, 채널: discord.VoiceChannel):
         b_team_voice_channels[interaction.guild_id] = 채널.id
         await interaction.response.send_message(f"📢 B팀 이동 음성 채널이 {채널.mention} (으)로 설정되었습니다!")
 
-    @app_commands.command(name="팀이동", description="가장 최근 밸런스 결과의 B팀 멤버 5명만 지정된 음성 채널로 이동시킵니다.")
+    @app_commands.command(name="팀이동", description="가장 최근 밸런스 결과의 B팀 멤버 5명만 지정된 B팀 음성 채널로 이동시킵니다.")
     async def move_teams(self, interaction: discord.Interaction):
         guild_id = interaction.guild_id
         
@@ -68,19 +74,25 @@ class VoiceMoverCog(commands.Cog):
 
         await interaction.followup.send(msg)
 
-    @app_commands.command(name="대기실복귀", description="B팀 음성 채널에 있는 인원들을 현재 내가 속한 음성 채널(대기실)로 불러옵니다.")
+    @app_commands.command(name="대기실복귀", description="B팀 음성 채널에 있는 인원들을 지정된 A팀(대기실) 음성 채널로 복귀시킵니다.")
     async def return_to_lobby(self, interaction: discord.Interaction):
-        if not interaction.user.voice or not interaction.user.voice.channel:
-            await interaction.response.send_message("❌ 명령어를 사용하는 분이 먼저 대기실(A팀) 음성 채널에 접속해 있어야 합니다.", ephemeral=True)
-            return
-
         guild_id = interaction.guild_id
+
+        # A팀 및 B팀 채널 설정 여부 확인
+        if guild_id not in a_team_voice_channels:
+            await interaction.response.send_message("❌ 먼저 `/a팀채널설정` 명령어로 대기실(A팀) 음성 채널을 지정해 주세요!", ephemeral=True)
+            return
+            
         if guild_id not in b_team_voice_channels:
-            await interaction.response.send_message("❌ 설정된 B팀 음성 채널이 없습니다.", ephemeral=True)
+            await interaction.response.send_message("❌ 먼저 `/b팀채널설정` 명령어로 B팀 음성 채널을 지정해 주세요!", ephemeral=True)
             return
 
+        destination_channel = interaction.guild.get_channel(a_team_voice_channels[guild_id])
         b_channel = interaction.guild.get_channel(b_team_voice_channels[guild_id])
-        destination_channel = interaction.user.voice.channel
+
+        if not destination_channel or not isinstance(destination_channel, discord.VoiceChannel):
+            await interaction.response.send_message("❌ 설정된 A팀(대기실) 음성 채널을 찾을 수 없습니다.", ephemeral=True)
+            return
 
         await interaction.response.defer()
 
