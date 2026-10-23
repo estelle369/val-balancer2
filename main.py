@@ -1,6 +1,7 @@
 import os
 import asyncio
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
@@ -143,7 +144,6 @@ async def run_balance_and_send(channel, participants):
 
     team_a, team_b, score_a, score_b, diff = calculate_best_teams(selected_players)
 
-    # 최근 밸런스 B팀 정보 저장 (/팀이동 연동용)
     guild_id = channel.guild.id if channel.guild else None
     if guild_id:
         last_balanced_match[guild_id] = {
@@ -165,7 +165,6 @@ async def run_balance_and_send(channel, participants):
             text_list.append(f"• {display} ({p['tier']})")
         return "\n".join(text_list)
 
-    # 요청 사항 반영: A팀 = 선수비, B팀 = 선공격 고정 출력
     embed.add_field(
         name=f"🔵 A 팀 [선수비 (Defender)] (총점: {score_a}점 / 평균: {score_a//5}점)",
         value=format_team(team_a),
@@ -271,18 +270,26 @@ async def handle_reaction_change(payload: discord.RawReactionActionEvent, is_add
     await update_match_status(match_data)
 
 
-# --- [슬래시 커맨드: 채널 설정 관련] ---
-@bot.tree.command(name="모집채널설정", description="현재 채널을 내전 모집 전용 채널로 지정합니다.")
+# --- [🛡️ 관리자 전용 /설정 그룹 커맨드] ---
+setting_group = app_commands.Group(
+    name="설정", 
+    description="⚙️ [관리자 전용] 내전 채널 설정 커맨드 모음",
+    default_permissions=discord.Permissions(manage_channels=True) # 채널 관리 권한 유저만 표시/실행
+)
+
+@setting_group.command(name="모집채널", description="⚙️ 현재 채널을 내전 모집 전용 채널로 지정합니다.")
 async def set_match_channel(interaction: discord.Interaction):
     target_channels[interaction.guild_id] = interaction.channel_id
     await interaction.response.send_message(f"✅ <#{interaction.channel_id}> 채널이 **내전 모집 채널**로 설정되었습니다!")
 
-
-@bot.tree.command(name="결과채널설정", description="내전 참가 명단 및 밸런스 결과가 출력될 채널을 지정합니다.")
-@discord.app_commands.describe(채널="결과 메시지를 보낼 디스코드 채널 선택")
+@setting_group.command(name="결과채널", description="⚙️ 내전 참가 명단 및 밸런스 결과가 출력될 채널을 지정합니다.")
+@app_commands.describe(채널="결과 메시지를 보낼 디스코드 채널 선택")
 async def set_result_channel(interaction: discord.Interaction, 채널: discord.TextChannel):
     result_channels[interaction.guild_id] = 채널.id
     await interaction.response.send_message(f"📢 내전 명단 및 밸런스 결과가 앞으로 {채널.mention} 채널로 출력됩니다!")
+
+# 그룹 등록
+bot.tree.add_command(setting_group)
 
 
 @bot.event
