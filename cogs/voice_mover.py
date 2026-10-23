@@ -3,15 +3,15 @@ from discord import app_commands
 from discord.ext import commands
 
 # 전역 설정 저장 (서버별 B팀 음성 채널 ID)
-# { guild_id: b_team_voice_channel_id }
-b_team_voice_channels = {}
+b_team_voice_channels = {}  # { guild_id: b_team_voice_channel_id }
 
 
 class VoiceMoverCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="B팀채널설정", description="B팀 유저들이 이동할 음성 채널을 지정합니다.")
+    # 슬래시 명령어 이름은 반드시 영문 소문자만 사용해야 합니다 (B -> b 수정)
+    @app_commands.command(name="b팀채널설정", description="B팀 유저들이 이동할 음성 채널을 지정합니다.")
     @app_commands.describe(채널="B팀이 이동할 음성 채널 선택")
     async def set_b_team_channel(self, interaction: discord.Interaction, 채널: discord.VoiceChannel):
         b_team_voice_channels[interaction.guild_id] = 채널.id
@@ -23,7 +23,7 @@ class VoiceMoverCog(commands.Cog):
         
         # B팀 음성 채널 설정 여부 확인
         if guild_id not in b_team_voice_channels:
-            await interaction.response.send_message("❌ 먼저 `/B팀채널설정` 명령어로 B팀이 이동할 음성 채널을 설정해 주세요!", ephemeral=True)
+            await interaction.response.send_message("❌ 먼저 `/b팀채널설정` 명령어로 B팀이 이동할 음성 채널을 설정해 주세요!", ephemeral=True)
             return
 
         target_channel_id = b_team_voice_channels[guild_id]
@@ -33,7 +33,6 @@ class VoiceMoverCog(commands.Cog):
             await interaction.response.send_message("❌ 설정된 B팀 음성 채널을 찾을 수 없습니다.", ephemeral=True)
             return
 
-        # main.py의 최근 밸런스 결과 데이터 가져오기
         from main import last_balanced_match
         
         if guild_id not in last_balanced_match or not last_balanced_match[guild_id].get("team_b"):
@@ -41,17 +40,14 @@ class VoiceMoverCog(commands.Cog):
             return
 
         team_b = last_balanced_match[guild_id]["team_b"]
-        
         await interaction.response.defer()
 
         moved_count = 0
         not_in_voice = []
 
-        # B팀 5명만 음성 채널 이동 처리
+        # B팀 5명 이동 처리
         for player in team_b:
             player_id = player["id"]
-            
-            # 용병(guest_)은 디스코드 유저가 아니므로 스킵
             if str(player_id).startswith("guest_"):
                 continue
 
