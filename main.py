@@ -43,7 +43,8 @@ class ValBot(commands.Bot):
         cogs_to_load = [
             "cogs.valorant_map",
             "cogs.member_manage",
-            "cogs.voice_mover"
+            "cogs.voice_mover",
+            "cogs.match_manage"
         ]
         
         for cog in cogs_to_load:
