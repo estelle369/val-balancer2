@@ -1,12 +1,10 @@
 import os
 import asyncio
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
-from config import TIER_SCORES
-from database import add_or_update_member, load_members, delete_member, init_db, get_db_connection
+from database import init_db, get_db_connection
 from utils.balancer import calculate_best_teams
 from keep_alive import keep_alive
 
@@ -41,12 +39,19 @@ class ValBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # 맵 추첨 Cog 파일 동적 로드
-        try:
-            await self.load_extension("cogs.valorant_map")
-            print("✅ ValorantMapCog 로드 성공")
-        except Exception as e:
-            print(f"❌ Cog 로드 실패: {e}")
+        # Cogs 모듈 자동 로드
+        cogs_to_load = [
+            "cogs.valorant_map",
+            "cogs.member_manage",
+            "cogs.voice_mover"
+        ]
+        
+        for cog in cogs_to_load:
+            try:
+                await self.load_extension(cog)
+                print(f"✅ {cog} 로드 성공")
+            except Exception as e:
+                print(f"❌ {cog} 로드 실패: {e}")
 
         await self.tree.sync()
         print("✅ 슬래시 커맨드가 동기화되었습니다!")
@@ -57,84 +62,8 @@ bot = ValBot()
 # --- [전역 상태 관리] ---
 target_channels = {}  # { guild_id: channel_id } (모집 채널)
 result_channels = {}  # { guild_id: result_channel_id } (결과 출력 채널)
-
-# 현재 진행 중인 내전 모집 데이터
-# { message_id: { "channel": channel, "guild_id": guild_id, "message": message, "participants": [], "status_msg": None, "lock": Lock(), "debounce_task": Task } }
-active_matches = {}
-
-
-# --- [대리 참가/취소용 드롭다운 메뉴] ---
-class ProxySelectMenu(discord.ui.Select):
-    def __init__(self, match_data, action_type="add"):
-        self.match_data = match_data
-        self.action_type = action_type
-        members = load_members()
-        options = []
-
-        if action_type == "add":
-            current_ids = [p["id"] for p in self.match_data["participants"]]
-            for uid, info in members.items():
-                if uid not in current_ids:
-                    options.append(discord.SelectOption(
-                        label=info["riot_id"],
-                        value=uid,
-                        description=f"티어: {info['tier']} ({info['score']}점)"
-                    ))
-            placeholder = "명단에 추가할 유저를 선택하세요..."
-        else:
-            for p in self.match_data["participants"]:
-                options.append(discord.SelectOption(
-                    label=p["name"],
-                    value=p["id"],
-                    description=f"티어: {p['tier']} ({p['score']}점)"
-                ))
-            placeholder = "명단에서 제외할 유저를 선택하세요..."
-
-        if not options:
-            options = [discord.SelectOption(label="선택 가능한 유저가 없습니다.", value="none")]
-
-        super().__init__(placeholder=placeholder, min_values=1, max_values=1, options=options[:25])
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        
-        if self.values[0] == "none":
-            await interaction.followup.send("선택 가능한 유저가 없습니다.", ephemeral=True)
-            return
-
-        selected_id = self.values[0]
-        members = load_members()
-
-        async with self.match_data["lock"]:
-            if self.action_type == "add":
-                if len(self.match_data["participants"]) >= 10:
-                    await interaction.followup.send("이미 10명 모집이 완료되었습니다.", ephemeral=True)
-                    return
-                
-                info = members[selected_id]
-                if not any(p["id"] == selected_id for p in self.match_data["participants"]):
-                    self.match_data["participants"].append({
-                        "id": selected_id,
-                        "name": info["riot_id"],
-                        "tier": info["tier"],
-                        "score": info["score"],
-                        "is_guest": str(selected_id).startswith("guest_")
-                    })
-                    await interaction.followup.send(f"✅ **{info['riot_id']}** 님이 대리로 참가되었습니다.", ephemeral=True)
-                else:
-                    await interaction.followup.send("이미 참가 명단에 있는 유저입니다.", ephemeral=True)
-                    return
-            else:
-                self.match_data["participants"] = [p for p in self.match_data["participants"] if p["id"] != selected_id]
-                await interaction.followup.send("✅ 명단에서 정상적으로 제외되었습니다.", ephemeral=True)
-
-        await update_match_status(self.match_data)
-
-
-class ProxyView(discord.ui.View):
-    def __init__(self, match_data, action_type="add"):
-        super().__init__(timeout=60)
-        self.add_item(ProxySelectMenu(match_data, action_type))
+active_matches = {}   # 진행 중인 내전 모집 데이터
+last_balanced_match = {}  # 최근 밸런스 결과 저장 { guild_id: { "team_a": [...], "team_b": [...] } }
 
 
 def get_target_output_channel(guild_id, fallback_channel):
@@ -213,9 +142,17 @@ async def run_balance_and_send(channel, participants):
 
     team_a, team_b, score_a, score_b, diff = calculate_best_teams(selected_players)
 
+    # 최근 밸런스 B팀 정보 저장 (/팀이동 연동용)
+    guild_id = channel.guild.id if channel.guild else None
+    if guild_id:
+        last_balanced_match[guild_id] = {
+            "team_a": team_a,
+            "team_b": team_b
+        }
+
     embed = discord.Embed(
         title="⚔️ 발로란트 내전 5:5 최적 팀 밸런스 결과",
-        description=f"**두 팀 점수 차이:** {diff}점",
+        description=f"**두 팀 점수 차이:** {diff}점\n💡 *B팀만 아래 음성 채널로 이동하려면 `/팀이동`을 입력하세요.*",
         color=discord.Color.gold(),
     )
 
@@ -227,13 +164,14 @@ async def run_balance_and_send(channel, participants):
             text_list.append(f"• {display} ({p['tier']})")
         return "\n".join(text_list)
 
+    # 요청 사항 반영: A팀 = 선수비, B팀 = 선공격 고정 출력
     embed.add_field(
-        name=f"🔵 A 팀<선수비> (총점: {score_a}점 / 평균: {score_a//5}점)",
+        name=f"🔵 A 팀 [선수비 (Defender)] (총점: {score_a}점 / 평균: {score_a//5}점)",
         value=format_team(team_a),
         inline=False,
     )
     embed.add_field(
-        name=f"🔴 B 팀<선공격> (총점: {score_b}점 / 평균: {score_b//5}점)",
+        name=f"🔴 B 팀 [선공격 (Attacker)] (총점: {score_b}점 / 평균: {score_b//5}점)",
         value=format_team(team_b),
         inline=False,
     )
@@ -278,6 +216,8 @@ async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
     await handle_reaction_change(payload, is_add=False)
 
 async def handle_reaction_change(payload: discord.RawReactionActionEvent, is_add: bool):
+    from database import load_members
+
     if payload.user_id == bot.user.id:
         return
     if payload.message_id not in active_matches:
@@ -330,7 +270,7 @@ async def handle_reaction_change(payload: discord.RawReactionActionEvent, is_add
     await update_match_status(match_data)
 
 
-# --- [슬래시 커맨드 설정] ---
+# --- [슬래시 커맨드: 채널 설정 관련] ---
 @bot.tree.command(name="모집채널설정", description="현재 채널을 내전 모집 전용 채널로 지정합니다.")
 async def set_match_channel(interaction: discord.Interaction):
     target_channels[interaction.guild_id] = interaction.channel_id
@@ -338,68 +278,10 @@ async def set_match_channel(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="결과채널설정", description="내전 참가 명단 및 밸런스 결과가 출력될 채널을 지정합니다.")
-@app_commands.describe(채널="결과 메시지를 보낼 디스코드 채널 선택")
+@discord.app_commands.describe(채널="결과 메시지를 보낼 디스코드 채널 선택")
 async def set_result_channel(interaction: discord.Interaction, 채널: discord.TextChannel):
     result_channels[interaction.guild_id] = 채널.id
     await interaction.response.send_message(f"📢 내전 명단 및 밸런스 결과가 앞으로 {채널.mention} 채널로 출력됩니다!")
-
-
-@bot.tree.command(name="등록", description="본인의 이름과 티어를 등록/수정합니다.")
-@app_commands.describe(이름="본인 이름 입력", tier="티어 선택")
-@app_commands.choices(tier=[app_commands.Choice(name=t, value=t) for t in TIER_SCORES.keys()])
-async def register(interaction: discord.Interaction, 이름: str, tier: app_commands.Choice[str]):
-    user_id = str(interaction.user.id)
-    selected_tier = tier.value
-    score = add_or_update_member(user_id, 이름, selected_tier)
-
-    embed = discord.Embed(title="✅ 등록 완료", color=discord.Color.green())
-    embed.add_field(name="디스코드 유저", value=f"<@{user_id}>", inline=False)
-    embed.add_field(name="이름", value=이름, inline=True)
-    embed.add_field(name="티어", value=f"{selected_tier} ({score}점)", inline=True)
-    await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="대리등록", description="다른 유저나 디스코드에 없는 용병의 이름을 등록합니다.")
-@app_commands.describe(이름="등록할 유저 이름 (예: 홍길동)", tier="티어 선택", 대상_유저="디스코드 유저 지목 (용병일 경우 비워둠)")
-@app_commands.choices(tier=[app_commands.Choice(name=t, value=t) for t in TIER_SCORES.keys()])
-async def register_proxy(interaction: discord.Interaction, 이름: str, tier: app_commands.Choice[str], 대상_유저: discord.User = None):
-    target_id = str(대상_유저.id) if 대상_유저 else f"guest_{이름}"
-    display_user = f"<@{target_id}>" if 대상_유zer else f"**용병 (디스코드 미가입)**"
-    selected_tier = tier.value
-    
-    score = add_or_update_member(target_id, 이름, selected_tier)
-
-    embed = discord.Embed(title="✅ 대리 등록 완료", color=discord.Color.green())
-    embed.add_field(name="대상 유저", value=display_user, inline=False)
-    embed.add_field(name="이름", value=이름, inline=True)
-    embed.add_field(name="티어", value=f"{selected_tier} ({score}점)", inline=True)
-    await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="목록", description="등록된 모든 유저 목록을 조회합니다.")
-async def member_list(interaction: discord.Interaction):
-    members = load_members()
-    if not members:
-        await interaction.response.send_message("❌ 아직 등록된 유저가 없습니다.")
-        return
-
-    embed = discord.Embed(title="📋 내전 등록 유저 목록", color=discord.Color.blue())
-    text = ""
-    for user_id, info in members.items():
-        user_display = f"**용병**" if str(user_id).startswith("guest_") else f"<@{user_id}>"
-        text += f"{user_display} | **{info['riot_id']}** | {info['tier']} ({info['score']}점)\n"
-
-    embed.description = text
-    await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="삭제", description="본인의 등록 정보를 삭제합니다.")
-async def unregister(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    if delete_member(user_id):
-        await interaction.response.send_message("✅ 등록 정보가 성공적으로 삭제되었습니다.")
-    else:
-        await interaction.response.send_message("❌ 등록된 정보가 없습니다.")
 
 
 @bot.event
