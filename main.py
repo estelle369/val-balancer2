@@ -228,12 +228,12 @@ async def run_balance_and_send(channel, participants):
         return "\n".join(text_list)
 
     embed.add_field(
-        name=f"🔵 A 팀 (총점: {score_a}점 / 평균: {score_a//5}점)",
+        name=f"🔵 A 팀<선수비> (총점: {score_a}점 / 평균: {score_a//5}점)",
         value=format_team(team_a),
         inline=False,
     )
     embed.add_field(
-        name=f"🔴 B 팀 (총점: {score_b}점 / 평균: {score_b//5}점)",
+        name=f"🔴 B 팀<선공격> (총점: {score_b}점 / 평균: {score_b//5}점)",
         value=format_team(team_b),
         inline=False,
     )
