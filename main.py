@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
-from database import init_db, get_db_connection
+from database import init_db, get_db_connection, save_guild_setting, load_all_guild_settings
 from utils.balancer import calculate_best_teams
 from keep_alive import keep_alive
 
@@ -40,6 +40,13 @@ class ValBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
+        # 1. 봇 시작 시 DB에서 서버별 채널 설정 불러오기 (캐싱)
+        global target_channels, result_channels
+        t_ch, r_ch, _, _ = load_all_guild_settings()
+        target_channels.update(t_ch)
+        result_channels.update(r_ch)
+        print("✅ DB에서 서버별 채널 설정을 성공적으로 불러왔습니다!")
+
         # Cogs 모듈 자동 로드
         cogs_to_load = [
             "cogs.valorant_map",
@@ -274,19 +281,31 @@ async def handle_reaction_change(payload: discord.RawReactionActionEvent, is_add
 setting_group = app_commands.Group(
     name="설정", 
     description="⚙️ [관리자 전용] 내전 채널 설정 커맨드 모음",
-    default_permissions=discord.Permissions(manage_channels=True) # 채널 관리 권한 유저만 표시/실행
+    default_permissions=discord.Permissions(manage_channels=True)
 )
 
 @setting_group.command(name="모집채널", description="⚙️ 현재 채널을 내전 모집 전용 채널로 지정합니다.")
 async def set_match_channel(interaction: discord.Interaction):
-    target_channels[interaction.guild_id] = interaction.channel_id
-    await interaction.response.send_message(f"✅ <#{interaction.channel_id}> 채널이 **내전 모집 채널**로 설정되었습니다!")
+    guild_id = interaction.guild_id
+    channel_id = interaction.channel_id
+    
+    # DB에 저장
+    save_guild_setting(guild_id, "target_channel_id", channel_id)
+    target_channels[guild_id] = channel_id
+    
+    await interaction.response.send_message(f"✅ <#{channel_id}> 채널이 **내전 모집 채널**로 영구 설정되었습니다!")
 
 @setting_group.command(name="결과채널", description="⚙️ 내전 참가 명단 및 밸런스 결과가 출력될 채널을 지정합니다.")
 @app_commands.describe(채널="결과 메시지를 보낼 디스코드 채널 선택")
 async def set_result_channel(interaction: discord.Interaction, 채널: discord.TextChannel):
-    result_channels[interaction.guild_id] = 채널.id
-    await interaction.response.send_message(f"📢 내전 명단 및 밸런스 결과가 앞으로 {채널.mention} 채널로 출력됩니다!")
+    guild_id = interaction.guild_id
+    channel_id = 채널.id
+    
+    # DB에 저장
+    save_guild_setting(guild_id, "result_channel_id", channel_id)
+    result_channels[guild_id] = channel_id
+    
+    await interaction.response.send_message(f"📢 내전 결과가 앞으로 {채널.mention} 채널로 영구 출력됩니다!")
 
 # 그룹 등록
 bot.tree.add_command(setting_group)
