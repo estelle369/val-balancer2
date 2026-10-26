@@ -25,10 +25,11 @@ def get_db_connection():
     )
 
 def init_db():
-    """앱 시작 시 members 테이블이 없으면 생성합니다."""
+    """앱 시작 시 members 및 guild_settings 테이블이 없으면 생성합니다."""
     try:
         conn = get_db_connection()
         with conn.cursor() as cursor:
+            # 1. 회원 정보 테이블
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS members (
                     user_id VARCHAR(255) PRIMARY KEY,
@@ -37,11 +38,24 @@ def init_db():
                     score INT NOT NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """)
+            
+            # 2. 서버별 채널 설정 테이블 (모집, 결과, A팀, B팀)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS guild_settings (
+                    guild_id BIGINT PRIMARY KEY,
+                    target_channel_id BIGINT NULL,
+                    result_channel_id BIGINT NULL,
+                    a_team_voice_id BIGINT NULL,
+                    b_team_voice_id BIGINT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
         conn.commit()
         conn.close()
-        print("✅ 데이터베이스(members 테이블) 초기화 완료!")
+        print("✅ 데이터베이스(members, guild_settings 테이블) 초기화 완료!")
     except Exception as e:
         print(f"❌ 데이터베이스 초기화 실패: {e}")
+
+# --- [회원 관련 함수] ---
 
 def load_members():
     """DB에서 모든 등록된 유저 정보를 불러와 딕셔너리 형태로 반환합니다."""
@@ -92,3 +106,53 @@ def delete_member(user_id: str) -> bool:
     except Exception as e:
         print(f"⚠️ 회원 삭제 실패: {e}")
         return False
+
+# --- [서버 채널 설정 관련 DB 함수] ---
+
+def save_guild_setting(guild_id: int, column_name: str, value: int):
+    """특정 서버의 채널 설정 값을 DB에 저장 또는 업데이트합니다."""
+    allowed_columns = ['target_channel_id', 'result_channel_id', 'a_team_voice_id', 'b_team_voice_id']
+    if column_name not in allowed_columns:
+        print(f"⚠️ 허용되지 않는 설정 컬럼: {column_name}")
+        return
+
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(f"""
+                INSERT INTO guild_settings (guild_id, {column_name})
+                VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE {column_name} = %s;
+            """, (guild_id, value, value))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ 서버 설정 저장 실패 ({column_name}): {e}")
+
+def load_all_guild_settings():
+    """모든 서버의 채널 설정 정보를 불러와 4개의 딕셔너리로 반환합니다."""
+    target_channels = {}
+    result_channels = {}
+    a_team_voice_channels = {}
+    b_team_voice_channels = {}
+    
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT guild_id, target_channel_id, result_channel_id, a_team_voice_id, b_team_voice_id FROM guild_settings")
+            rows = cursor.fetchall()
+            for row in rows:
+                g_id = int(row['guild_id'])
+                if row['target_channel_id']:
+                    target_channels[g_id] = int(row['target_channel_id'])
+                if row['result_channel_id']:
+                    result_channels[g_id] = int(row['result_channel_id'])
+                if row['a_team_voice_id']:
+                    a_team_voice_channels[g_id] = int(row['a_team_voice_id'])
+                if row['b_team_voice_id']:
+                    b_team_voice_channels[g_id] = int(row['b_team_voice_id'])
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ 서버 설정 불러오기 실패: {e}")
+        
+    return target_channels, result_channels, a_team_voice_channels, b_team_voice_channels
