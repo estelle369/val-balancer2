@@ -74,7 +74,7 @@ class VoiceMoverCog(commands.Cog):
                 riot_name = player.get("riot_id", "알 수 없음")
                 not_in_voice.append(riot_name)
 
-        msg = f"🚚 **B팀 유저 {moved_count}명**을 {target_channel.mention} 채널로 이동시켰습니다!"
+        msg = f" **B팀 유저 {moved_count}명**을 {target_channel.mention} 채널로 이동시켰습니다!"
         if not_in_voice:
             msg += f"\n⚠️ 음성 채널에 접속해 있지 않아 이동하지 못한 유저: {', '.join(not_in_voice)}"
 
