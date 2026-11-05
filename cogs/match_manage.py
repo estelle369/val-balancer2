@@ -3,15 +3,17 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from database import load_members
+from database import load_members, load_all_guild_settings
 from utils.balancer import calculate_best_teams
 
 
 class MatchManageCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.target_channels = {}  # { guild_id: channel_id }
-        self.result_channels = {}  # { guild_id: result_channel_id }
+        # DB에서 저장된 채널 설정 불러오기
+        target_ch, result_ch, _, _ = load_all_guild_settings()
+        self.target_channels = target_ch  # { guild_id: channel_id }
+        self.result_channels = result_ch  # { guild_id: result_channel_id }
         self.active_matches = {}   # 진행 중인 내전 모집 데이터
         self.last_balanced_match = {}
 
