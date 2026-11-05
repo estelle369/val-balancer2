@@ -109,13 +109,14 @@ def delete_member(user_id: str) -> bool:
 
 # --- [서버 채널 설정 관련 DB 함수] ---
 
-def save_guild_setting(guild_id: int, column_name: str, value: int):
-    """특정 서버의 채널 설정 값을 DB에 저장 또는 업데이트합니다."""
+def save_guild_setting(guild_id: int, column_name: str, value: int) -> bool:
+    """특정 서버의 채널 설정을 저장하고 성공 여부를 반환합니다."""
     allowed_columns = ['target_channel_id', 'result_channel_id', 'a_team_voice_id', 'b_team_voice_id']
     if column_name not in allowed_columns:
         print(f"⚠️ 허용되지 않는 설정 컬럼: {column_name}")
-        return
+        return False
 
+    conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cursor:
@@ -125,9 +126,13 @@ def save_guild_setting(guild_id: int, column_name: str, value: int):
                 ON DUPLICATE KEY UPDATE {column_name} = %s;
             """, (guild_id, value, value))
         conn.commit()
-        conn.close()
+        return True
     except Exception as e:
         print(f"⚠️ 서버 설정 저장 실패 ({column_name}): {e}")
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
 
 def load_all_guild_settings():
     """모든 서버의 채널 설정 정보를 불러와 4개의 딕셔너리로 반환합니다."""

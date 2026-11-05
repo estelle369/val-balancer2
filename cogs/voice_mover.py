@@ -1,3 +1,5 @@
+import asyncio
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -26,18 +28,36 @@ class VoiceMoverCog(commands.Cog):
     @setting_voice_group.command(name="a팀채널", description="⚙️ 대기실 및 A팀이 사용할 음성 채널을 지정합니다.")
     @app_commands.describe(채널="A팀(대기실) 음성 채널 선택")
     async def set_a_team_channel(self, interaction: discord.Interaction, 채널: discord.VoiceChannel):
-        save_guild_setting(interaction.guild_id, "a_team_voice_id", 채널.id)
+        await interaction.response.defer()
+        saved = await asyncio.to_thread(
+            save_guild_setting, interaction.guild_id, "a_team_voice_id", 채널.id
+        )
+        if not saved:
+            await interaction.followup.send(
+                "❌ DB 저장에 실패했습니다. 봇 실행 로그의 '서버 설정 저장 실패' 내용을 확인해 주세요.",
+                ephemeral=True
+            )
+            return
         a_team_voice_channels[interaction.guild_id] = 채널.id
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"📢 A팀(대기실) 음성 채널이 {채널.mention} (으)로 설정되었습니다!"
         )
 
     @setting_voice_group.command(name="b팀채널", description="⚙️ B팀 유저들이 이동할 음성 채널을 지정합니다.")
     @app_commands.describe(채널="B팀이 이동할 음성 채널 선택")
     async def set_b_team_channel(self, interaction: discord.Interaction, 채널: discord.VoiceChannel):
-        save_guild_setting(interaction.guild_id, "b_team_voice_id", 채널.id)
+        await interaction.response.defer()
+        saved = await asyncio.to_thread(
+            save_guild_setting, interaction.guild_id, "b_team_voice_id", 채널.id
+        )
+        if not saved:
+            await interaction.followup.send(
+                "❌ DB 저장에 실패했습니다. 봇 실행 로그의 '서버 설정 저장 실패' 내용을 확인해 주세요.",
+                ephemeral=True
+            )
+            return
         b_team_voice_channels[interaction.guild_id] = 채널.id
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"📢 B팀 이동 음성 채널이 {채널.mention} (으)로 설정되었습니다!"
         )
 
