@@ -6,21 +6,6 @@ from dotenv import load_dotenv
 from database import init_db, get_db_connection
 from keep_alive import keep_alive
 
-
-# 주석 추가할 파일들
-file_comments = {
-    'main.py': '# Discord 발로란트 내전 봇의 진입점 및 모든 Cogs 로더\n',
-    'config.py': '# 발로란트 티어별 점수 설정 (팀 밸런싱 계산용)\n',
-    'database.py': '# MySQL DB 연결 및 회원/채널 설정 관리\n',
-    'keep_alive.py': '# Render PaaS 서버 항상 활성화 유지용 Flask 서버\n',
-    'cogs/match_manage.py': '# 자동 메시지 감지 & 이모지 반응으로 내전 모집/팀 밸런싱 관리\n',
-    'cogs/admin_settings.py': '# 관리자용 채널 설정 명령어\n',
-    'cogs/valorant_map.py': '# 발로란트 맵 추첨 명령어\n',
-    'cogs/voice_mover.py': '# 팀 배정 후 B팀만 지정된 음성 채널로 이동\n',
-    'cogs/member_manage.py': '# 회원 등록/삭제 및 용병 대리 등록 관리\n',
-    'utils/balancer.py': '# 10명 선수를 5:5로 최적 팀 밸런싱 계산 (조합론 알고리즘)\n',
-}
-
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
@@ -58,7 +43,6 @@ class ValBot(commands.Bot):
             "cogs.valorant_map",
             "cogs.voice_mover",
             "cogs.member_manage",
-            "cogs.match"
         ]
         
         for cog in cogs_to_load:
