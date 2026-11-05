@@ -39,7 +39,9 @@ class ValBot(commands.Bot):
         # Cogs 모듈 자동 로드 목록 (match_manage.py 파일명과 일치시킴)
         cogs_to_load = [
             "cogs.match_manage",
-            "cogs.admin_settings"
+            "cogs.admin_settings",
+            "cogs.valorant_map",
+            "cogs.voice_mover"
         ]
         
         for cog in cogs_to_load:
