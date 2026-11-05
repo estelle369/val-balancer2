@@ -41,7 +41,9 @@ class ValBot(commands.Bot):
             "cogs.match_manage",
             "cogs.admin_settings",
             "cogs.valorant_map",
-            "cogs.voice_mover"
+            "cogs.voice_mover",
+            "cogs.member_manage",
+            "cogs.match"
         ]
         
         for cog in cogs_to_load:
