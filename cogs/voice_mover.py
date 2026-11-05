@@ -130,18 +130,34 @@ class VoiceMoverCog(commands.Cog):
             await interaction.response.send_message("❌ 설정된 A팀(대기실) 음성 채널을 찾을 수 없습니다.", ephemeral=True)
             return
 
+        if not isinstance(b_channel, discord.VoiceChannel):
+            await interaction.response.send_message("❌ 설정된 B팀 음성 채널을 찾을 수 없습니다. `/설정음성 b팀채널`로 다시 지정해 주세요!", ephemeral=True)
+            return
+
+        members = list(b_channel.members)
+        if not members:
+            await interaction.response.send_message(
+                f"ℹ️ B팀 채널 {b_channel.mention}에서 이동할 인원이 확인되지 않습니다. 참가자가 이 채널에 접속해 있는지 확인해 주세요.",
+                ephemeral=True
+            )
+            return
+
         await interaction.response.defer()
 
         returned_count = 0
-        if b_channel:
-            for member in b_channel.members:
-                try:
-                    await member.move_to(destination_channel)
-                    returned_count += 1
-                except Exception as e:
-                    print(f"{member.display_name} 복귀 실패: {e}")
+        failed_count = 0
+        for member in members:
+            try:
+                await member.move_to(destination_channel)
+                returned_count += 1
+            except Exception as e:
+                failed_count += 1
+                print(f"{member.display_name} 복귀 실패: {e}")
 
-        await interaction.followup.send(f"🏠 B팀 채널의 **{returned_count}명**을 {destination_channel.mention} (으)로 복귀시켰습니다!")
+        message = f"🏠 B팀 채널의 **{returned_count}명**을 {destination_channel.mention} (으)로 복귀시켰습니다!"
+        if failed_count:
+            message += f"\n⚠️ {failed_count}명 이동 실패: 봇의 멤버 이동 및 대상 채널 연결 권한과 실행 로그를 확인해 주세요."
+        await interaction.followup.send(message)
 
 
 async def setup(bot):
