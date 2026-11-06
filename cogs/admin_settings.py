@@ -21,7 +21,7 @@ class AdminSettings(commands.Cog):
         
         save_guild_setting(guild_id, "target_channel_id", channel_id)
         
-        match_cog = self.bot.get_cog("MatchManager")
+        match_cog = self.bot.get_cog("MatchManageCog")
         if match_cog:
             match_cog.target_channels[guild_id] = channel_id
         
@@ -35,7 +35,7 @@ class AdminSettings(commands.Cog):
         
         save_guild_setting(guild_id, "result_channel_id", channel_id)
         
-        match_cog = self.bot.get_cog("MatchManager")
+        match_cog = self.bot.get_cog("MatchManageCog")
         if match_cog:
             match_cog.result_channels[guild_id] = channel_id
         

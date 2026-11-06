@@ -17,7 +17,7 @@ class MatchManageCog(commands.Cog):
         self.active_matches = {}   # 진행 중인 내전 모집 데이터
         self.last_balanced_match = {}
 
-    def get_target_output_channel(self, guil_id, fallback_channel):
+    def get_target_output_channel(self, guild_id, fallback_channel):
         if guild_id in self.result_channels:
             channel_obj = self.bot.get_channel(self.result_channels[guild_id])
             if channel_obj:
